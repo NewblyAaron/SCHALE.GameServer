@@ -219,7 +219,7 @@ namespace SCHALE.GameServer.Controllers.Api.ProtocolHandlers
                     Season = 6,
                     Group = 1,
                     BattleStartTime = DateTime.Now,
-                    Seed = 1,
+                    Seed = DateTime.Now.Ticks,
                     AttackingUserDB = arenaUserDB,
                     DefendingUserDB = DummyOpponent(GetDefense(req.AccountId))[0]
                 }
