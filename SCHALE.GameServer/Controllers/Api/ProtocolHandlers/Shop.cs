@@ -242,53 +242,57 @@ namespace SCHALE.GameServer.Controllers.Api.ProtocolHandlers
                 }
             }
 
-            using var transaction = _context.Database.BeginTransaction();
-
-            try
+            var executionStrategy = _context.Database.CreateExecutionStrategy();
+            executionStrategy.Execute(() =>
             {
-                // add characters
-                _context.Characters.AddRange(
-                    gachaList.Where(x => x.Character != null)
-                            .Select(x => x.Character)!);
+                using var transaction = _context.Database.BeginTransaction();
 
-                // create if item does not exist
-                foreach (var id in itemDict.Keys)
+                try
                 {
-                    var itemExists = _context.Items
-                        .Any(x => x.AccountServerId == account.ServerId && x.UniqueId == id);
-                    if (!itemExists)
+                    // add characters
+                    _context.Characters.AddRange(
+                        gachaList.Where(x => x.Character != null)
+                                .Select(x => x.Character)!);
+
+                    // create if item does not exist
+                    foreach (var id in itemDict.Keys)
                     {
-                        _context.Items.Add(new ItemDB()
+                        var itemExists = _context.Items
+                            .Any(x => x.AccountServerId == account.ServerId && x.UniqueId == id);
+                        if (!itemExists)
                         {
-                            IsNew = true,
-                            UniqueId = id,
-                            StackCount = 0,
-                            AccountServerId = account.ServerId,
-                        });
+                            _context.Items.Add(new ItemDB()
+                            {
+                                IsNew = true,
+                                UniqueId = id,
+                                StackCount = 0,
+                                AccountServerId = account.ServerId,
+                            });
+                        }
                     }
-                }
-                _context.SaveChanges();
+                    _context.SaveChanges();
 
-                // perform item count update
-                foreach (var (id, count) in itemDict)
+                    // perform item count update
+                    foreach (var (id, count) in itemDict)
+                    {
+                        _context.Items
+                            .Where(x => x.AccountServerId == account.ServerId && x.UniqueId == id)
+                            .ExecuteUpdate(setters => setters.SetProperty(
+                                item => item.StackCount, item => item.StackCount + count));
+                    }
+
+                    _context.SaveChanges();
+
+                    transaction.Commit();
+
+                    _context.Entry(account).Collection(x => x.Items).Reload();
+                }
+                catch (Exception ex)
                 {
-                    _context.Items
-                        .Where(x => x.AccountServerId == account.ServerId && x.UniqueId == id)
-                        .ExecuteUpdate(setters => setters.SetProperty(
-                            item => item.StackCount, item => item.StackCount + count));
+                    _logger.LogError("Transaction failed: {Message}", ex.Message);
+                    throw;
                 }
-
-                _context.SaveChanges();
-
-                transaction.Commit();
-
-                _context.Entry(account).Collection(x => x.Items).Reload();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Transaction failed: {Message}", ex.Message);
-                throw;
-            }
+            });
 
             var itemDbList = itemDict.Keys
                 .Select(id => _context.Items.AsNoTracking().First(x => x.AccountServerId == account.ServerId && x.UniqueId == id))
