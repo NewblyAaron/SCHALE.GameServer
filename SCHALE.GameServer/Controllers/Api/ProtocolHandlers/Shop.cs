@@ -5,11 +5,19 @@ using SCHALE.Common.NetworkProtocol;
 using SCHALE.Common.Utils;
 using SCHALE.GameServer.Services;
 using SCHALE.GameServer.Utils;
+using Serilog;
 
 namespace SCHALE.GameServer.Controllers.Api.ProtocolHandlers
 {
     public class Shop : ProtocolHandlerBase
     {
+        private const double DEFAULT_SSR_RATE = 1.5000;   // 0.0283% from default banner
+        private const double DEFAULT_SR_RATE = 4.2500;   // 0.8409% from default banner
+        private const double TENPULL_SR_RATE = 9.0000;   // 4.4091% from default banner
+        private const double DEFAULT_R_RATE = 12.500;    //  7.134% from default banner
+        private readonly Dictionary<Common.FlatData.CharacterExcelT, double> _pool = [];
+        private readonly Dictionary<Common.FlatData.CharacterExcelT, double> _tenPullPool = [];
+
         private readonly ISessionKeyService _sessionKeyService;
         private readonly SCHALEContext _context;
         private readonly SharedDataCacheService _sharedData;
@@ -24,6 +32,24 @@ namespace SCHALE.GameServer.Controllers.Api.ProtocolHandlers
             _context = context;
             _sharedData = sharedData;
             _logger = logger;
+
+            foreach (var chara in _sharedData.CharaList)
+            {
+                if (chara.Rarity == Common.FlatData.Rarity.SSR)
+                {
+                    _pool.Add(chara, DEFAULT_SSR_RATE);
+                    _tenPullPool.Add(chara, DEFAULT_SSR_RATE);
+                }
+                else if (chara.Rarity == Common.FlatData.Rarity.SR)
+                {
+                    _pool.Add(chara, DEFAULT_SR_RATE);
+                    _tenPullPool.Add(chara, TENPULL_SR_RATE);
+                }
+                else
+                {
+                    _pool.Add(chara, DEFAULT_R_RATE);
+                }
+            }
         }
 
         [ProtocolHandler(Protocol.Shop_BeforehandGachaGet)]
@@ -115,130 +141,40 @@ namespace SCHALE.GameServer.Controllers.Api.ProtocolHandlers
             // SR           18.5%  21.5%
             // R            78.5%  100.%
 
-            const int gpStoneID = 90070086;
+            // const int gpStoneID = 90070086;
             const int chUniStoneID = 23;
+            // var rateUpChId = 10095; // 10094, 10095
+            // var rateUpIsNormalStudent = false;
+            // bool shouldDoGuaranteedSR = true;
+            // itemDict[gpStoneID] = 10;
 
-            var rateUpChId = 10094; // 10094, 10095
-            var rateUpIsNormalStudent = false;
             var gachaList = new List<GachaResult>(10);
             var itemDict = new AccDict<long>();
-            bool shouldDoGuaranteedSR = true;
-            // itemDict[gpStoneID] = 10;
+            // bool rigGacha = false;
 
             for (int i = 0; i < 10; ++i)
             {
-                var randomNumber = Random.Shared.NextInt64(1000);
-                if (randomNumber < 7)
-                {
-                    // always 3 star
-                    shouldDoGuaranteedSR = false;
-                    var isNew = accountChSet.Add(rateUpChId);
-                    gachaList.Add(new(rateUpChId)
-                    {
-                        Character = !isNew ? null : new()
-                        {
-                            AccountServerId = account.ServerId,
-                            UniqueId = rateUpChId,
-                            StarGrade = 3,
-                        },
-                        Stone = isNew ? null : new()
-                        {
-                            UniqueId = chUniStoneID,
-                            StackCount = 50,
-                        }
-                    });
-                    if (!isNew)
-                    {
-                        itemDict[chUniStoneID] += 50;
-                        itemDict[rateUpChId] += 100;
-                    }
-                }
-                else if (randomNumber < 30)
-                {
-                    shouldDoGuaranteedSR = false;
-                    var normalSSRList = _sharedData.CharaListSSRNormal;
-                    var poolSize = normalSSRList.Count;
-                    if (rateUpIsNormalStudent) poolSize--;
+                long chId = GachaProbability.Random(i == 9 ? _tenPullPool : _pool);
+                bool isNew = accountChSet.Add(chId);
 
-                    var randomPoolIdx = (int)Random.Shared.NextInt64(poolSize);
-                    if (normalSSRList[randomPoolIdx].Id == rateUpChId) randomPoolIdx++;
-
-                    var chId = normalSSRList[randomPoolIdx].Id;
-                    var isNew = accountChSet.Add(chId);
-                    gachaList.Add(new(chId)
-                    {
-                        Character = !isNew ? null : new()
-                        {
-                            AccountServerId = account.ServerId,
-                            UniqueId = chId,
-                            StarGrade = 3,
-                        },
-                        Stone = isNew ? null : new()
-                        {
-                            UniqueId = chUniStoneID,
-                            StackCount = 50,
-                        }
-                    });
-                    if (!isNew)
-                    {
-                        itemDict[chUniStoneID] += 50;
-                        itemDict[chId] += 30;
-                    }
-                }
-                else if (randomNumber < 215 || (i == 9 && shouldDoGuaranteedSR))
+                gachaList.Add(new(chId)
                 {
-                    shouldDoGuaranteedSR = false;
-                    var normalSRList = _sharedData.CharaListSRNormal;
-                    var randomPoolIdx = (int)Random.Shared.NextInt64(normalSRList.Count);
-                    var chId = normalSRList[randomPoolIdx].Id;
-                    var isNew = accountChSet.Add(chId);
-
-                    gachaList.Add(new(chId)
+                    Character = !isNew ? null : new()
                     {
-                        Character = !isNew ? null : new()
-                        {
-                            AccountServerId = account.ServerId,
-                            UniqueId = chId,
-                            StarGrade = 2,
-                        },
-                        Stone = isNew ? null : new()
-                        {
-                            UniqueId = chUniStoneID,
-                            StackCount = 10,
-                        }
-                    });
-                    if (!isNew)
+                        AccountServerId = account.ServerId,
+                        UniqueId = chId,
+                        StarGrade = 3,
+                    },
+                    Stone = isNew ? null : new()
                     {
-                        itemDict[chUniStoneID] += 10;
-                        itemDict[chId] += 5;
+                        UniqueId = chUniStoneID,
+                        StackCount = 50,
                     }
-                }
-                else
+                });
+                if (!isNew)
                 {
-                    var normalRList = _sharedData.CharaListRNormal;
-                    var randomPoolIdx = (int)Random.Shared.NextInt64(normalRList.Count);
-                    var chId = normalRList[randomPoolIdx].Id;
-                    var isNew = accountChSet.Add(chId);
-
-                    gachaList.Add(new(chId)
-                    {
-                        Character = !isNew ? null : new()
-                        {
-                            AccountServerId = account.ServerId,
-                            UniqueId = chId,
-                            StarGrade = 1,
-                        },
-                        Stone = isNew ? null : new()
-                        {
-                            UniqueId = chUniStoneID,
-                            StackCount = 1,
-                        }
-                    });
-                    if (!isNew)
-                    {
-                        itemDict[chUniStoneID] += 1;
-                        itemDict[chId] += 1;
-                    }
+                    itemDict[chUniStoneID] += 50;
+                    itemDict[chId] += 30;
                 }
             }
 
